@@ -1,0 +1,27 @@
+<div class="crumb">
+  {% for c in note.crumbs %}
+    {% if not loop.last %}<span>{{ c }}</span><span class="sep">/</span>{% else %}<b>{{ c }}</b>{% endif %}
+  {% endfor %}
+</div>
+<h1 class="note-title">{{ note.title }}</h1>
+{% if note.description %}<p class="lead">{{ note.description }}</p>{% endif %}
+<div class="meta">
+  <span class="m"><span class="chip {{ note.chip }}">{{ note.chip }}</span></span>
+  <span class="m"><code>{{ note.permalink }}</code></span>
+  {% if note.tags %}<span class="tags">{% for t in note.tags %}<span class="tag">#{{ t }}</span>{% endfor %}</span>{% endif %}
+</div>
+
+<div class="body">{{ note.body_html|safe }}</div>
+
+{% if note.related %}
+<div class="section">
+  <h4>Related <span class="n">{{ note.related|length }}</span></h4>
+  <div class="related">
+    {% for r in note.related %}
+    <a href="/note/{{ r.permalink }}">
+      <span class="chip {{ r.chip }}">{{ r.chip }}</span>{{ r.title }}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

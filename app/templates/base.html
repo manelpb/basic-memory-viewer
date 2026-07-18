@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{% if note %}{{ note.title }} — {{ app_title }}{% else %}{{ app_title }}{% endif %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="mark">{{ app_title[0]|upper }}</span><span class="name">{{ app_title }}</span>
+      <span class="ro">read-only</span>
+    </div>
+    <form class="search" action="/" method="get" onsubmit="return false">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="q" type="search" name="q" placeholder="Search memories…" autocomplete="off" />
+      <kbd>⌘K</kbd>
+    </form>
+
+    <div class="nav-label">Workspace</div>
+    {% for p in projects %}
+    <a class="proj{% if p.active %} active{% endif %}" href="/?project={{ p.name|urlencode }}">
+      <span class="dot"></span><span class="pname">{{ p.name }}</span>
+    </a>
+    {% endfor %}
+
+    <div class="account">
+      <span class="avatar">{{ app_title[0]|upper }}</span>
+      {% if app_user %}<span class="who">{{ app_user }}<small>read-only</small></span>{% endif %}
+      <button class="theme-toggle" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <section class="notelist">
+    <div class="list-head">
+      <div class="scope"><span>{{ active_project }}</span></div>
+    </div>
+    <div id="listbody" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
+      {% include "_rows.html" %}
+    </div>
+  </section>
+
+  <main class="detail">
+    {% if note %}
+    <div class="detail-inner">{% include "_note.html" %}</div>
+    {% else %}
+    <div class="welcome">Select a note</div>
+    {% endif %}
+  </main>
+</div>
+
+<script>
+  const root = document.documentElement;
+  const saved = localStorage.getItem("theme");
+  if (saved) root.setAttribute("data-theme", saved);
+  document.getElementById("themeBtn").addEventListener("click", () => {
+    const cur = root.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    root.setAttribute("data-theme", next); localStorage.setItem("theme", next);
+  });
+
+  const q = document.getElementById("q");
+  const listbody = document.getElementById("listbody");
+  const project = {{ active_project|tojson }};
+
+  // Lazy-hydrate card descriptions as rows scroll into view (batched).
+  let batch = new Set(), flushTimer;
+  async function flush() {
+    const ids = [...batch]; batch.clear();
+    if (!ids.length) return;
+    try {
+      const res = await fetch("/descriptions?ids=" + encodeURIComponent(ids.join(",")));
+      const map = await res.json();
+      for (const id of ids) {
+        const el = listbody.querySelector(`.r-snip[data-desc-for="${id}"]`);
+        if (el) { el.textContent = map[id] || ""; el.removeAttribute("data-desc-for"); }
+      }
+    } catch (e) {}
+  }
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      io.unobserve(e.target);
+      const id = e.target.getAttribute("data-desc-for");
+      if (id) { batch.add(id); clearTimeout(flushTimer); flushTimer = setTimeout(flush, 120); }
+    }
+  }, { rootMargin: "300px" });
+  function observeSnips() {
+    listbody.querySelectorAll(".r-snip[data-desc-for]").forEach(el => io.observe(el));
+  }
+  observeSnips();
+
+  let t;
+  q.addEventListener("input", () => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      const res = await fetch(`/search?q=${encodeURIComponent(q.value.trim())}&project=${encodeURIComponent(project)}`);
+      listbody.innerHTML = await res.text();
+      observeSnips();
+    }, 220);
+  });
+  document.addEventListener("keydown", e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); q.focus(); }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{% if search_mode %}
+<div class="searchmeta">
+  <span>{{ count }} result{{ "" if count == 1 else "s" }} for “{{ query }}”</span>
+  <span class="via">via basic-memory · semantic</span>
+</div>
+{% endif %}
+<div class="rows">
+  {% for g in groups %}
+    {% if g.day %}<div class="day">{{ g.day }}</div>{% endif %}
+    {% for n in g["items"] %}
+    <a class="row{% if n.active %} active{% endif %}" href="/note/{{ n.permalink }}">
+      <div class="r-top">
+        <span class="chip {{ n.chip }}">{{ n.chip }}</span>
+        <span class="r-title">{{ n.title }}</span>
+        {% if n.date %}<span class="r-date">{{ n.date }}</span>{% endif %}
+      </div>
+      {% if n.snip %}<div class="r-snip">{{ n.snip }}</div>
+      {% else %}<div class="r-snip" data-desc-for="{{ n.permalink }}"></div>{% endif %}
+    </a>
+    {% endfor %}
+  {% else %}
+    <div class="empty">{% if search_mode %}No matches.{% else %}No notes yet.{% endif %}</div>
+  {% endfor %}
+</div>

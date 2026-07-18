@@ -1,0 +1,7 @@
+Chart.yaml
+values.yaml
+templates/
+mock/
+**/__pycache__/
+*.pyc
+.pytest_cache/
