@@ -32,8 +32,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/manelpb/basic-memory-viewer
+          # Immutable per-commit tag only — no moving `latest`. Deploys pin a SHA
+          # so rollouts are deterministic and rollbackable.
           tags: |
-            type=raw,value=latest
             type=sha,prefix=,format=short
 
       - uses: docker/build-push-action@v6
