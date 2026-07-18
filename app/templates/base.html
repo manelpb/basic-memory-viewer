@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/static/app.css" />
 </head>
-<body>
+<body class="{% if note_page %}view-note{% endif %}">
 <div class="app">
   <aside class="sidebar">
     <div class="brand">
@@ -15,14 +15,17 @@
     </div>
     <form class="search" action="/" method="get" onsubmit="return false">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input id="q" type="search" name="q" placeholder="Search memories…" autocomplete="off" />
+      <input id="q" class="js-search" type="search" name="q" placeholder="Search memories…" autocomplete="off" />
       <kbd>⌘K</kbd>
     </form>
 
     <div class="nav-label">Workspace</div>
+    <a class="proj{% if not active_project %} active{% endif %}" href="/">
+      <span class="dot"></span><span class="pname">All memories</span>
+    </a>
     {% for p in projects %}
     <a class="proj{% if p.active %} active{% endif %}" href="/?project={{ p.name|urlencode }}">
-      <span class="dot"></span><span class="pname">{{ p.name }}</span>
+      <span class="dot"></span><span class="pname">{{ p.label }}</span>
     </a>
     {% endfor %}
 
@@ -37,7 +40,17 @@
 
   <section class="notelist">
     <div class="list-head">
-      <div class="scope"><span>{{ active_project }}</span></div>
+      <div class="lh-top">
+        <div class="scope"><span>{{ project_label(active_project) if active_project else "All memories" }}</span></div>
+        <select class="proj-select" aria-label="Switch project"
+                onchange="location.href = this.value ? '/?project='+encodeURIComponent(this.value) : '/'">
+          <option value=""{% if not active_project %} selected{% endif %}>All memories</option>
+          {% for p in projects %}
+          <option value="{{ p.name }}"{% if p.active %} selected{% endif %}>{{ p.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <input class="lh-search js-search" type="search" placeholder="Search memories…" autocomplete="off" aria-label="Search" />
     </div>
     <div id="listbody" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
       {% include "_rows.html" %}
@@ -65,28 +78,63 @@
 
   const q = document.getElementById("q");
   const listbody = document.getElementById("listbody");
+  const detail = document.querySelector(".detail");
   const project = {{ active_project|tojson }};
+  const appTitle = {{ app_title|tojson }};
 
-  // Lazy-hydrate card descriptions as rows scroll into view (batched).
-  let batch = new Set(), flushTimer;
-  async function flush() {
-    const ids = [...batch]; batch.clear();
-    if (!ids.length) return;
-    try {
-      const res = await fetch("/descriptions?ids=" + encodeURIComponent(ids.join(",")));
-      const map = await res.json();
-      for (const id of ids) {
-        const el = listbody.querySelector(`.r-snip[data-desc-for="${id}"]`);
-        if (el) { el.textContent = map[id] || ""; el.removeAttribute("data-desc-for"); }
-      }
-    } catch (e) {}
+  // Lazy-hydrate card descriptions as rows scroll into view. The endpoint streams
+  // NDJSON so each card fills as its description resolves. Loading is SINGLE-FLIGHT
+  // (one request at a time) and abortable — a streaming response holds its HTTP
+  // connection open, so many in-flight fetches would exhaust the browser's ~6
+  // connections/host and stall a subsequent navigation. One request keeps the rest free.
+  let pending = new Set(), flushTimer, inflight = null;
+  function fillSnip(permalink, description) {
+    const el = listbody.querySelector(`.r-snip[data-desc-for="${CSS.escape(permalink)}"]`);
+    if (!el) return;
+    el.textContent = description || "";
+    el.classList.remove("loading");
+    el.removeAttribute("data-desc-for");
   }
+  function scheduleFlush() { clearTimeout(flushTimer); flushTimer = setTimeout(runFlush, 120); }
+  async function runFlush() {
+    if (inflight || !pending.size) return;
+    const ids = [...pending].slice(0, 40);
+    ids.forEach(id => pending.delete(id));
+    ids.forEach(id => {
+      const el = listbody.querySelector(`.r-snip[data-desc-for="${CSS.escape(id)}"]`);
+      if (el) el.classList.add("loading");
+    });
+    const ctrl = new AbortController();
+    inflight = ctrl;
+    try {
+      const res = await fetch("/descriptions?ids=" + encodeURIComponent(ids.join(",")), { signal: ctrl.signal });
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line) continue;
+          try { const o = JSON.parse(line); fillSnip(o.permalink, o.description); } catch (e) {}
+        }
+      }
+    } catch (e) { /* aborted or network error */ }
+    finally { inflight = null; if (pending.size) scheduleFlush(); }
+  }
+  function resetDescriptions() {
+    if (inflight) { inflight.abort(); inflight = null; }
+    pending.clear(); clearTimeout(flushTimer);
+  }
+  addEventListener("pagehide", resetDescriptions);
   const io = new IntersectionObserver((entries) => {
     for (const e of entries) {
       if (!e.isIntersecting) continue;
       io.unobserve(e.target);
       const id = e.target.getAttribute("data-desc-for");
-      if (id) { batch.add(id); clearTimeout(flushTimer); flushTimer = setTimeout(flush, 120); }
+      if (id) { pending.add(id); scheduleFlush(); }
     }
   }, { rootMargin: "300px" });
   function observeSnips() {
@@ -94,18 +142,75 @@
   }
   observeSnips();
 
+  // Search box lives in the sidebar (desktop) and the list header (mobile) —
+  // both drive the same live search; ⌘K focuses whichever is visible.
+  const searchInputs = [...document.querySelectorAll(".js-search")];
   let t;
-  q.addEventListener("input", () => {
+  function runSearch(val) {
     clearTimeout(t);
     t = setTimeout(async () => {
-      const res = await fetch(`/search?q=${encodeURIComponent(q.value.trim())}&project=${encodeURIComponent(project)}`);
+      const res = await fetch(`/search?q=${encodeURIComponent(val.trim())}&project=${encodeURIComponent(project)}`);
+      resetDescriptions();  // abort hydration for the rows we're about to replace
       listbody.innerHTML = await res.text();
       observeSnips();
     }, 220);
-  });
+  }
+  searchInputs.forEach(inp => inp.addEventListener("input", () => {
+    searchInputs.forEach(o => { if (o !== inp) o.value = inp.value; });
+    runSearch(inp.value);
+  }));
   document.addEventListener("keydown", e => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); q.focus(); }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      const vis = searchInputs.find(i => i.offsetParent !== null) || searchInputs[0];
+      if (vis) vis.focus();
+    }
   });
+
+  // Client-side navigation: swap only the reading pane instead of full reload.
+  function markActive(permalink) {
+    listbody.querySelectorAll(".row.active").forEach(r => r.classList.remove("active"));
+    const row = listbody.querySelector(`.row[href="/note/${CSS.escape(permalink)}"]`);
+    if (row) row.classList.add("active");
+  }
+  async function openNote(permalink, push = true) {
+    detail.classList.add("loading");
+    try {
+      const res = await fetch("/note/" + permalink, { headers: { "X-Fragment": "1" } });
+      if (!res.ok) { location.href = "/note/" + permalink; return; }
+      detail.innerHTML = '<div class="detail-inner">' + (await res.text()) + "</div>";
+    } catch (e) { location.href = "/note/" + permalink; return; }
+    detail.classList.remove("loading");
+    detail.scrollTop = 0;
+    document.body.classList.add("view-note");
+    markActive(permalink);
+    const title = detail.querySelector(".note-title");
+    if (title) document.title = title.textContent + " — " + appTitle;
+    if (push) history.pushState({ permalink }, "", "/note/" + permalink);
+  }
+  function showList(push) {
+    document.body.classList.remove("view-note");
+    if (push) history.pushState({}, "", "/?project=" + encodeURIComponent(project));
+  }
+  // Intercept row + related-note clicks; let the back link reveal the list.
+  document.addEventListener("click", e => {
+    const back = e.target.closest(".detail-back");
+    if (back) { e.preventDefault(); showList(true); return; }
+    const a = e.target.closest('a[href^="/note/"]');
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    openNote(a.getAttribute("href").slice("/note/".length));
+  });
+  addEventListener("popstate", e => {
+    if (e.state && e.state.permalink) openNote(e.state.permalink, false);
+    else showList(false);
+  });
+  // Deep-loaded note page: record its state so Back reveals the list in-page.
+  if (document.body.classList.contains("view-note")) {
+    const active = listbody.querySelector(".row.active");
+    if (active) history.replaceState(
+      { permalink: active.getAttribute("href").slice("/note/".length) }, "", location.href);
+  }
 </script>
 </body>
 </html>

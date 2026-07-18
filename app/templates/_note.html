@@ -1,3 +1,4 @@
+<a class="detail-back" href="/?project={{ active_project|urlencode }}">← All memories</a>
 <div class="crumb">
   {% for c in note.crumbs %}
     {% if not loop.last %}<span>{{ c }}</span><span class="sep">/</span>{% else %}<b>{{ c }}</b>{% endif %}
