@@ -77,17 +77,28 @@ async def _stream_descriptions(permalinks):
     async def one(p):
         async with _DESC_SEM:
             try:
-                n = await call("read_note", identifier=p, project=p.split("/")[0])
+                # Timeout so a wedged MCP call can't hold a semaphore slot forever.
+                n = await asyncio.wait_for(
+                    call("read_note", identifier=p, project=p.split("/")[0]), 15)
                 return p, (n.get("frontmatter") or {}).get("description") or ""
             except Exception:
                 return p, ""
 
     async with mcp.session() as call:
         tasks = [asyncio.create_task(one(p)) for p in missing]
-        for fut in asyncio.as_completed(tasks):
-            p, d = await fut
-            _DESC_CACHE[p] = (d, time.time())
-            yield json.dumps({"permalink": p, "description": d}) + "\n"
+        try:
+            for fut in asyncio.as_completed(tasks):
+                p, d = await fut
+                _DESC_CACHE[p] = (d, time.time())
+                yield json.dumps({"permalink": p, "description": d}) + "\n"
+        finally:
+            # Client aborts cancel this generator mid-stream. Without cleanup the
+            # orphaned tasks outlive the session teardown and hang on the dead
+            # session while holding _DESC_SEM slots — after 8 leaks every later
+            # /descriptions request blocks forever (infinite spinners).
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _row(entity, active_permalink=None, desc=""):
