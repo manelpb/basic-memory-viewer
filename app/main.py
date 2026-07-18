@@ -31,25 +31,11 @@ import os
 APP_TITLE = os.environ.get("APP_TITLE", "Memory")
 APP_USER = os.environ.get("APP_USER", "")
 
-# Display-only project aliases, e.g. PROJECT_LABELS="main=kubernetes,foo=bar".
-# Routing still uses the real project name; only the label shown changes.
-PROJECT_LABELS = {
-    k.strip(): v.strip()
-    for pair in os.environ.get("PROJECT_LABELS", "").split(",") if "=" in pair
-    for k, v in [pair.split("=", 1)]
-}
-
-
-def project_label(name):
-    return PROJECT_LABELS.get(name, name)
-
-
 BASE = Path(__file__).parent
 app = FastAPI(title="memory-viewer")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
-templates.env.globals.update(app_title=APP_TITLE, app_user=APP_USER,
-                             project_label=project_label)
+templates.env.globals.update(app_title=APP_TITLE, app_user=APP_USER)
 
 
 async def _projects(call, active):
@@ -58,7 +44,7 @@ async def _projects(call, active):
     if mcp.DEFAULT_PROJECT in names:  # keep default first
         names.remove(mcp.DEFAULT_PROJECT)
         names.insert(0, mcp.DEFAULT_PROJECT)
-    return [{"name": n, "label": project_label(n), "active": n == active} for n in names]
+    return [{"name": n, "active": n == active} for n in names]
 
 
 RECENT_LIMIT = 60

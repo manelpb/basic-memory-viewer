@@ -25,7 +25,7 @@
     </a>
     {% for p in projects %}
     <a class="proj{% if p.active %} active{% endif %}" href="/?project={{ p.name|urlencode }}">
-      <span class="dot"></span><span class="pname">{{ p.label }}</span>
+      <span class="dot"></span><span class="pname">{{ p.name }}</span>
     </a>
     {% endfor %}
 
@@ -41,12 +41,12 @@
   <section class="notelist">
     <div class="list-head">
       <div class="lh-top">
-        <div class="scope"><span>{{ project_label(active_project) if active_project else "All memories" }}</span></div>
+        <div class="scope"><span>{{ active_project or "All memories" }}</span></div>
         <select class="proj-select" aria-label="Switch project"
                 onchange="location.href = this.value ? '/?project='+encodeURIComponent(this.value) : '/'">
           <option value=""{% if not active_project %} selected{% endif %}>All memories</option>
           {% for p in projects %}
-          <option value="{{ p.name }}"{% if p.active %} selected{% endif %}>{{ p.label }}</option>
+          <option value="{{ p.name }}"{% if p.active %} selected{% endif %}>{{ p.name }}</option>
           {% endfor %}
         </select>
       </div>
