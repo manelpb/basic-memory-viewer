@@ -10,6 +10,8 @@ MCP session per request and calls `search_notes`, `read_note`,
 build step** — nothing to keep in sync. Search is basic-memory's own hybrid
 full-text + semantic ranking; the view always reflects the live knowledge base.
 
+![memory-viewer screenshot](docs/screenshot.png)
+
 ## Features
 
 - Three-pane layout: projects · note list · reading pane
@@ -27,6 +29,13 @@ pip install -r requirements.txt
 MCP_URL=http://localhost:8000/mcp uvicorn app.main:app --port 8200
 ```
 
+No basic-memory around? `MOCK_DATA=1` serves canned demo notes (used for the
+screenshot above):
+
+```bash
+MOCK_DATA=1 uvicorn app.main:app --port 8200
+```
+
 For a cluster-hosted basic-memory, port-forward it first:
 
 ```bash
@@ -38,6 +47,7 @@ kubectl port-forward -n basic-memory svc/basic-memory 8000:8000
 | Env | Default | Purpose |
 |-|-|-|
 | `MCP_URL` | `http://localhost:8000/mcp` | basic-memory MCP SSE endpoint |
+| `MOCK_DATA` | _(unset)_ | `1` = serve canned demo notes, no MCP needed |
 | `BM_PROJECT` | `main` | default project shown |
 | `APP_TITLE` | `Memory` | brand name shown in the UI |
 | `APP_USER` | _(empty)_ | optional account name in the sidebar |

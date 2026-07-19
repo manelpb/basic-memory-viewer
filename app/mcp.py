@@ -13,11 +13,16 @@ from mcp.client.sse import sse_client
 
 MCP_URL = os.environ.get("MCP_URL", "http://localhost:8000/mcp")
 DEFAULT_PROJECT = os.environ.get("BM_PROJECT", "main")
+MOCK_DATA = os.environ.get("MOCK_DATA") == "1"
 
 
 @asynccontextmanager
 async def session():
     """Open one MCP session; yields an async `call(name, **args)` returning parsed JSON."""
+    if MOCK_DATA:  # demo/screenshot mode — no basic-memory needed
+        from . import mock
+        yield mock.call
+        return
     async with sse_client(MCP_URL) as (read, write):
         async with ClientSession(read, write) as s:
             await s.initialize()
