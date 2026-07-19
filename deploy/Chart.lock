@@ -1,0 +1,6 @@
+dependencies:
+- name: common
+  repository: https://manelpb.github.io/library-charts
+  version: 5.5.0
+digest: sha256:bfbff707e7ca7fc44d42c93ee04d3ecfac464510538c809e788c3c27f26a9858
+generated: "2026-07-19T08:52:32.84183-04:00"

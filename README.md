@@ -66,9 +66,25 @@ CI (`.github/workflows/build.yml`) builds and pushes
 
 Runs anywhere a container does — it only needs `MCP_URL` pointing at a reachable
 basic-memory MCP endpoint. Deploy it alongside your basic-memory instance (same
-network) so it can reach the MCP service directly. Kubernetes manifests
-(Deployment / Service / Ingress) are maintained separately in your own GitOps
-repo; this repo holds only the application and its image build.
+network) so it can reach the MCP service directly.
+
+### Helm
+
+`deploy/` holds a Helm chart built on the
+[common library chart](https://github.com/manelpb/library-charts). Pin an image
+tag (images are tagged by short commit SHA, there is no `latest`), point
+`MCP_URL` at your basic-memory service, and install:
+
+```bash
+helm dependency build deploy
+helm upgrade --install memory-viewer ./deploy \
+  -n basic-memory \
+  --set image.tag=<short-sha>
+```
+
+See `deploy/values.yaml` for the full surface (env, probes, resources,
+ingress). Ingress is disabled by default — the viewer has no auth, so keep it
+on a private network (LAN-only ingress, VPN, or port-forward).
 
 ## Endpoints
 

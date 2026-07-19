@@ -1,0 +1,110 @@
+# basic-memory-viewer — deploy next to your basic-memory instance so MCP_URL is
+# reachable in-cluster. Inherits from the common library chart:
+# https://github.com/manelpb/library-charts
+
+image:
+  repository: ghcr.io/manelpb/basic-memory-viewer
+  # Images are tagged with the short commit SHA only (no moving `latest`) —
+  # pin one so rollouts are deterministic and rollbackable.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+controller:
+  replicas: 1
+  strategy: RollingUpdate
+  rollingUpdate:
+    surge: 1
+    unavailable: 0
+
+env:
+  # basic-memory MCP endpoint (SSE transport at /mcp)
+  MCP_URL: http://basic-memory.basic-memory.svc.cluster.local:8000/mcp
+  # default project shown in the UI
+  BM_PROJECT: main
+  # brand name shown in the UI
+  APP_TITLE: Memory
+  # optional account name in the sidebar
+  # APP_USER: you
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  main:
+    type: ClusterIP
+    ports:
+      http:
+        enabled: true
+        port: 8000
+
+probes:
+  # The app is stateless; readiness (/healthz) also checks that the MCP
+  # endpoint answers, liveness (/livez) only that the process serves HTTP.
+  readiness:
+    enabled: true
+    custom: true
+    spec:
+      httpGet:
+        path: /healthz
+        port: 8000
+      initialDelaySeconds: 5
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+  liveness:
+    enabled: true
+    custom: true
+    spec:
+      httpGet:
+        path: /livez
+        port: 8000
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+  startup:
+    enabled: false
+
+# Root filesystem is read-only; give the runtime a scratch /tmp.
+persistence:
+  tmp:
+    enabled: true
+    type: emptyDir
+    mountPath: /tmp
+
+# The viewer has no auth — do NOT expose it to the internet. Keep it on a
+# private network (LAN-only ingress, VPN, or port-forward).
+ingress:
+  main:
+    enabled: false
+    # annotations:
+    #   cert-manager.io/cluster-issuer: your-issuer
+    # tls:
+    #   - secretName: memory-tls
+    #     hosts:
+    #       - memory.example.internal
+    # hosts:
+    #   - host: memory.example.internal
+    #     paths:
+    #       - path: /
+    #         pathType: Prefix
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
