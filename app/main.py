@@ -6,7 +6,6 @@ note-list fragment.
 """
 import asyncio
 import json
-import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,7 +19,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import history, mcp, mock
+from . import fsindex, history, mcp, mock
 from .render import (
     render_markdown, prettify_title, snippet, parse_date, day_label,
     short_date, chip_class, category_of, clean_title,
@@ -59,45 +58,66 @@ RECENT_LIMIT = 60
 # Recent feed window. Notes span the full history (real created_at), so keep this
 # wide — the feed is capped by RECENT_LIMIT, not the window.
 RECENT_TIMEFRAME = os.environ.get("RECENT_TIMEFRAME", "365d")  # basic-memory caps at 1y
-_DESC_CACHE: dict[str, tuple[str, float]] = {}  # permalink -> (description, ts)
-_DESC_TTL = 300.0
+# permalink -> (description, change token). The token is the note's
+# updated_at/created_at from the feed: entries never expire, they are simply
+# superseded when the note changes — better freshness AND fewer read_notes
+# than the old 300s TTL.
+_DESC_CACHE: dict[str, tuple[str, str]] = {}
 _DESC_SEM = asyncio.Semaphore(8)  # cap concurrent read_note fan-out
 
 
-async def _stream_descriptions(permalinks):
+async def _stream_descriptions(pairs):
     """Yield NDJSON `{permalink, description}` lines, one per note, as each resolves.
 
-    Cached hits stream immediately; misses fire concurrently (capped) and stream
-    in completion order so the client fills each card as its answer lands — no
-    all-at-once flush. frontmatter.description is what recent_activity omits.
+    `pairs` is [(permalink, change_token)]. Resolution order per note:
+    1. NOTES_DIR frontmatter index (colocated deploys) — no MCP at all;
+    2. token-keyed cache;
+    3. MCP read_note fan-out (capped), streamed in completion order.
+    frontmatter.description is what recent_activity omits.
     """
-    now = time.time()
     missing = []
-    for p in permalinks:
+    if fsindex.available():
+        await asyncio.to_thread(fsindex.refresh)
+    for p, tok in pairs:
+        if fsindex.available():
+            d = fsindex.get(p)
+            if d is not None:
+                yield json.dumps({"permalink": p, "description": d}) + "\n"
+                continue
         hit = _DESC_CACHE.get(p)
-        if hit and now - hit[1] < _DESC_TTL:
+        if hit and hit[1] == tok:
             yield json.dumps({"permalink": p, "description": hit[0]}) + "\n"
         else:
-            missing.append(p)
+            missing.append((p, tok))
     if not missing:
         return
 
-    async def one(p):
+    async def one(p, tok):
         async with _DESC_SEM:
             try:
                 # Timeout so a wedged MCP call can't hold a semaphore slot forever.
                 n = await asyncio.wait_for(
                     call("read_note", identifier=p, project=p.split("/")[0]), 15)
-                return p, (n.get("frontmatter") or {}).get("description") or ""
+                return p, tok, (n.get("frontmatter") or {}).get("description") or ""
             except Exception:
-                return p, ""
+                return p, tok, ""
 
-    async with mcp.session() as call:
-        tasks = [asyncio.create_task(one(p)) for p in missing]
+    try:
+        session = mcp.session()
+        call = await session.__aenter__()
+    except Exception:
+        # MCP unreachable: answer with empty descriptions rather than aborting
+        # the stream mid-chunk (which strands client-side spinners). Uncached on
+        # purpose — the next request retries.
+        for p, _tok in missing:
+            yield json.dumps({"permalink": p, "description": ""}) + "\n"
+        return
+    try:
+        tasks = [asyncio.create_task(one(p, tok)) for p, tok in missing]
         try:
             for fut in asyncio.as_completed(tasks):
-                p, d = await fut
-                _DESC_CACHE[p] = (d, time.time())
+                p, tok, d = await fut
+                _DESC_CACHE[p] = (d, tok)
                 yield json.dumps({"permalink": p, "description": d}) + "\n"
         finally:
             # Client aborts cancel this generator mid-stream. Without cleanup the
@@ -107,6 +127,8 @@ async def _stream_descriptions(permalinks):
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        await session.__aexit__(None, None, None)
 
 
 def _row(entity, active_permalink=None, desc=""):
@@ -120,6 +142,8 @@ def _row(entity, active_permalink=None, desc=""):
         "date": short_date(dt),
         "snip": snippet(desc or entity.get("content") or entity.get("description") or ""),
         "active": permalink == active_permalink,
+        # change token for the description cache (see _stream_descriptions)
+        "upd": entity.get("updated_at") or entity.get("created_at") or "",
     }
 
 
@@ -225,6 +249,7 @@ async def index(request: Request, project: str = ""):
         note = await _note(call, first["permalink"]) if first else None
         if note and first:
             first["active"] = True
+    _prewarm(groups)
     return templates.TemplateResponse(request, "base.html", {
         "request": request, "projects": projects, "active_project": project,
         "groups": groups, "note": note, "search_mode": False, "query": "",
@@ -248,6 +273,7 @@ async def note_page(request: Request, permalink: str):
             _projects(call, project),
             _recent_groups(call, project, active_permalink=permalink),
             _note(call, permalink))
+    _prewarm(groups)
     return templates.TemplateResponse(request, "base.html", {
         "request": request, "projects": projects, "active_project": project,
         "groups": groups, "note": note, "search_mode": False, "query": "",
@@ -289,13 +315,40 @@ async def search(request: Request, q: str = "", project: str = ""):
     })
 
 
+def _prewarm(groups):
+    """Fire-and-forget cache fill for freshly rendered feed rows, so the first
+    scroll hits a warm cache. MCP mode only: the fs index needs no warming and
+    mock data is instant."""
+    if fsindex.available() or mcp.MOCK_DATA:
+        return
+    pairs = [(i["permalink"], i["upd"]) for g in groups for i in g["items"]]
+    pairs = [(p, t) for p, t in pairs
+             if not (_DESC_CACHE.get(p) and _DESC_CACHE[p][1] == t)][:40]
+    if not pairs:
+        return
+
+    async def drain():
+        try:
+            async for _ in _stream_descriptions(pairs):
+                pass
+        except Exception:
+            pass
+
+    asyncio.create_task(drain())
+
+
 @app.get("/descriptions")
 async def descriptions(ids: str = ""):
-    """Lazy-hydrate card descriptions: client sends permalinks of on-screen rows.
-    Streams NDJSON so each card fills as its description resolves (no batch flush)."""
-    perms = [p for p in ids.split(",") if p][:40]
+    """Lazy-hydrate card descriptions: client sends `permalink|change_token`
+    entries for on-screen rows. Streams NDJSON so each card fills as its
+    description resolves (no batch flush)."""
+    pairs = []
+    for entry in ids.split(","):
+        if entry:
+            p, _, tok = entry.partition("|")
+            pairs.append((p, tok))
     return StreamingResponse(
-        _stream_descriptions(perms), media_type="application/x-ndjson")
+        _stream_descriptions(pairs[:40]), media_type="application/x-ndjson")
 
 
 async def _note_relpath(permalink: str) -> str:

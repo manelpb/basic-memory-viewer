@@ -15,7 +15,7 @@
         {% if n.date %}<span class="r-date">{{ n.date }}</span>{% endif %}
       </div>
       {% if n.snip %}<div class="r-snip">{{ n.snip }}</div>
-      {% else %}<div class="r-snip" data-desc-for="{{ n.permalink }}"></div>{% endif %}
+      {% else %}<div class="r-snip" data-desc-for="{{ n.permalink }}" data-desc-upd="{{ n.upd|default('') }}"></div>{% endif %}
     </a>
     {% endfor %}
   {% else %}

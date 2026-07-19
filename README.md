@@ -57,7 +57,7 @@ kubectl port-forward -n basic-memory svc/basic-memory 8000:8000
 |-|-|-|
 | `MCP_URL` | `http://localhost:8000/mcp` | basic-memory MCP SSE endpoint |
 | `MOCK_DATA` | _(unset)_ | `1` = serve canned demo notes, no MCP needed |
-| `NOTES_DIR` | _(unset)_ | path to the basic-memory notes dir → this instance owns file history |
+| `NOTES_DIR` | _(unset)_ | path to the basic-memory notes dir → file history + descriptions served from disk |
 | `HISTORY_URL` | _(unset)_ | base URL of a `NOTES_DIR` instance → proxy history to it |
 | `SNAPSHOT_INTERVAL` | `300` | seconds between git snapshots (`NOTES_DIR` mode) |
 | `GIT_REMOTE` | _(unset)_ | git URL; every snapshot is pushed here for backup |
