@@ -1,0 +1,10 @@
+{% if related %}
+<h4>Related <span class="n">{{ related|length }}</span></h4>
+<div class="related">
+  {% for r in related %}
+  <a href="/note/{{ r.permalink }}">
+    <span class="chip {{ r.chip }}">{{ r.chip }}</span>{{ r.title }}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}

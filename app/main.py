@@ -6,6 +6,7 @@ note-list fragment.
 """
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -45,12 +46,22 @@ async def _start_history():
         asyncio.create_task(history.snapshot_loop())
 
 
+_PROJ_CACHE: tuple[list, float] | None = None  # (names, ts)
+_PROJ_TTL = 300.0
+
+
 async def _projects(call, active):
-    data = await call("list_memory_projects")
-    names = [p["name"] for p in (data or {}).get("projects", [])]
-    if mcp.DEFAULT_PROJECT in names:  # keep default first
-        names.remove(mcp.DEFAULT_PROJECT)
-        names.insert(0, mcp.DEFAULT_PROJECT)
+    global _PROJ_CACHE
+    now = time.monotonic()
+    if _PROJ_CACHE and now - _PROJ_CACHE[1] < _PROJ_TTL:
+        names = _PROJ_CACHE[0]
+    else:
+        data = await call("list_memory_projects")
+        names = [p["name"] for p in (data or {}).get("projects", [])]
+        if mcp.DEFAULT_PROJECT in names:  # keep default first
+            names.remove(mcp.DEFAULT_PROJECT)
+            names.insert(0, mcp.DEFAULT_PROJECT)
+        _PROJ_CACHE = (names, now)
     return [{"name": n, "active": n == active} for n in names]
 
 
@@ -187,25 +198,12 @@ async def _recent_all(call, names, active_permalink=None):
 
 
 async def _note(call, permalink):
+    # Related is NOT computed here: it is a semantic search costing ~1s in
+    # basic-memory, so the client lazy-loads it from /related after render.
     project = permalink.split("/")[0]
     note = await call("read_note", identifier=permalink, project=project)
     fm = note.get("frontmatter", {}) or {}
     title = fm.get("title") or note.get("title") or permalink.rsplit("/", 1)[-1]
-    # Related: semantic search on the title, minus self
-    related = []
-    try:
-        sr = await call("search_notes", query=prettify_title(title), project=project, page_size=7)
-        for r in sr.get("results", []):
-            rp = r.get("permalink")
-            if rp != permalink:
-                related.append({
-                    "permalink": rp,
-                    "title": clean_title(r.get("title", ""), category_of(rp)),
-                    "chip": chip_class(category_of(rp)),
-                })
-        related = related[:6]
-    except Exception:
-        pass
     parts = permalink.split("/")
     cat = category_of(permalink)
     return {
@@ -217,8 +215,26 @@ async def _note(call, permalink):
         "tags": [t for t in (fm.get("tags") or []) if t and t != fm.get("type")],
         "body_html": render_markdown(note.get("content", "")),
         "crumbs": parts,
-        "related": related,
     }
+
+
+async def _related(call, permalink, title):
+    """Semantic search on the note title, minus the note itself."""
+    related = []
+    try:
+        sr = await call("search_notes", query=prettify_title(title),
+                        project=permalink.split("/")[0], page_size=7)
+        for r in sr.get("results", []):
+            rp = r.get("permalink")
+            if rp != permalink:
+                related.append({
+                    "permalink": rp,
+                    "title": clean_title(r.get("title", ""), category_of(rp)),
+                    "chip": chip_class(category_of(rp)),
+                })
+    except Exception:
+        pass
+    return related[:6]
 
 
 @app.get("/livez", response_class=PlainTextResponse)
@@ -349,6 +365,17 @@ async def descriptions(ids: str = ""):
             pairs.append((p, tok))
     return StreamingResponse(
         _stream_descriptions(pairs[:40]), media_type="application/x-ndjson")
+
+
+@app.get("/related/{permalink:path}", response_class=HTMLResponse)
+async def related_fragment(request: Request, permalink: str, title: str = ""):
+    """Lazy 'Related' panel: semantic search is slow (~1s), so the note renders
+    first and the client fills this fragment in afterwards."""
+    async with mcp.session() as call:
+        related = await _related(call, permalink, title or permalink.rsplit("/", 1)[-1])
+    return templates.TemplateResponse(request, "_related.html", {
+        "request": request, "related": related,
+    })
 
 
 async def _note_relpath(permalink: str) -> str:

@@ -20,15 +20,7 @@
 
 <div class="body">{{ note.body_html|safe }}</div>
 
-{% if note.related %}
-<div class="section">
-  <h4>Related <span class="n">{{ note.related|length }}</span></h4>
-  <div class="related">
-    {% for r in note.related %}
-    <a href="/note/{{ r.permalink }}">
-      <span class="chip {{ r.chip }}">{{ r.chip }}</span>{{ r.title }}
-    </a>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
+{# Filled by the client from /related — semantic search is too slow to block
+   the note render. Hidden until it has content. #}
+<div class="section related-lazy" hidden
+     data-related-for="{{ note.permalink }}" data-related-title="{{ note.title }}"></div>

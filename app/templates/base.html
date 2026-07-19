@@ -42,8 +42,7 @@
     <div class="list-head">
       <div class="lh-top">
         <div class="scope"><span>{{ active_project or "All memories" }}</span></div>
-        <select class="proj-select" aria-label="Switch project"
-                onchange="location.href = this.value ? '/?project='+encodeURIComponent(this.value) : '/'">
+        <select class="proj-select" aria-label="Switch project">
           <option value=""{% if not active_project %} selected{% endif %}>All memories</option>
           {% for p in projects %}
           <option value="{{ p.name }}"{% if p.active %} selected{% endif %}>{{ p.name }}</option>
@@ -100,8 +99,60 @@
   const q = document.getElementById("q");
   const listbody = document.getElementById("listbody");
   const detail = document.querySelector(".detail");
-  const project = {{ active_project|tojson }};
+  let project = {{ active_project|tojson }};
   const appTitle = {{ app_title|tojson }};
+
+  // Lazy "Related" panel: semantic search takes ~1s in basic-memory, so the
+  // note renders without it and this fills the placeholder afterwards.
+  async function loadRelated() {
+    const ph = detail.querySelector(".related-lazy[data-related-for]");
+    if (!ph) return;
+    const permalink = ph.getAttribute("data-related-for");
+    ph.removeAttribute("data-related-for");  // one shot
+    try {
+      const res = await fetch("/related/" + permalink +
+        "?title=" + encodeURIComponent(ph.getAttribute("data-related-title") || ""));
+      if (!res.ok) return;
+      const html = (await res.text()).trim();
+      // The note pane may have navigated away while we were fetching.
+      if (html && ph.isConnected) { ph.innerHTML = html; ph.hidden = false; }
+    } catch (e) { /* panel just stays hidden */ }
+  }
+  loadRelated();
+
+  // Generation counter for list replacements: a slow older fetch (project
+  // switch, search) must not overwrite the result of a newer one.
+  let listGen = 0;
+
+  // Client-side project switching: swap only the note list (300ms fragment)
+  // instead of a full page reload that also blocks on opening a note.
+  async function switchProject(name, push = true) {
+    const gen = ++listGen;
+    project = name;
+    document.querySelectorAll(".sidebar .proj").forEach((a, i) => {
+      a.classList.toggle("active", a.getAttribute("href") ===
+        (name ? "/?project=" + encodeURIComponent(name) : "/"));
+    });
+    const scope = document.querySelector(".scope span");
+    if (scope) scope.textContent = name || "All memories";
+    document.querySelectorAll(".proj-select").forEach(s => { s.value = name; });
+    if (push) history.pushState({ project: name }, "", name ? "/?project=" + encodeURIComponent(name) : "/");
+    const res = await fetch(`/search?q=&project=${encodeURIComponent(name)}`);
+    const html = await res.text();
+    if (gen !== listGen) return;
+    resetDescriptions();
+    listbody.innerHTML = html;
+    observeSnips();
+  }
+  document.addEventListener("click", e => {
+    const a = e.target.closest(".sidebar .proj");
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    const url = new URL(a.href, location.origin);
+    switchProject(url.searchParams.get("project") || "");
+  });
+  document.querySelectorAll(".proj-select").forEach(s =>
+    s.addEventListener("change", () => switchProject(s.value)));
 
   // Lazy-hydrate card descriptions as rows scroll into view. The endpoint streams
   // NDJSON so each card fills as its description resolves. Loading is SINGLE-FLIGHT
@@ -171,9 +222,12 @@
   function runSearch(val) {
     clearTimeout(t);
     t = setTimeout(async () => {
+      const gen = ++listGen;
       const res = await fetch(`/search?q=${encodeURIComponent(val.trim())}&project=${encodeURIComponent(project)}`);
+      const html = await res.text();
+      if (gen !== listGen) return;  // a newer list replacement won
       resetDescriptions();  // abort hydration for the rows we're about to replace
-      listbody.innerHTML = await res.text();
+      listbody.innerHTML = html;
       observeSnips();
     }, 220);
   }
@@ -205,6 +259,7 @@
     detail.classList.remove("loading");
     detail.scrollTop = 0;
     document.body.classList.add("view-note");
+    loadRelated();
     markActive(permalink);
     const title = detail.querySelector(".note-title");
     if (title) document.title = title.textContent + " — " + appTitle;
@@ -225,6 +280,7 @@
   });
   addEventListener("popstate", e => {
     if (e.state && e.state.permalink) openNote(e.state.permalink, false);
+    else if (e.state && e.state.project !== undefined) { switchProject(e.state.project, false); showList(false); }
     else showList(false);
   });
   // File-history dialog: version list + side-by-side diff vs the current note.
@@ -299,11 +355,14 @@
     }
   }
 
-  // Deep-loaded note page: record its state so Back reveals the list in-page.
+  // Seed the initial history entry so Back can restore this view in-page:
+  // note pages record their permalink, list pages record their project.
   if (document.body.classList.contains("view-note")) {
     const active = listbody.querySelector(".row.active");
     if (active) history.replaceState(
       { permalink: active.getAttribute("href").slice("/note/".length) }, "", location.href);
+  } else {
+    history.replaceState({ project }, "", location.href);
   }
 </script>
 </body>
