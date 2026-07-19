@@ -20,7 +20,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import mcp
+from . import history, mcp, mock
 from .render import (
     render_markdown, prettify_title, snippet, parse_date, day_label,
     short_date, chip_class, category_of, clean_title,
@@ -35,7 +35,15 @@ BASE = Path(__file__).parent
 app = FastAPI(title="memory-viewer")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
-templates.env.globals.update(app_title=APP_TITLE, app_user=APP_USER)
+templates.env.globals.update(
+    app_title=APP_TITLE, app_user=APP_USER,
+    history_enabled=history.enabled() or mcp.MOCK_DATA)
+
+
+@app.on_event("startup")
+async def _start_history():
+    if history.native():
+        asyncio.create_task(history.snapshot_loop())
 
 
 async def _projects(call, active):
@@ -288,6 +296,60 @@ async def descriptions(ids: str = ""):
     perms = [p for p in ids.split(",") if p][:40]
     return StreamingResponse(
         _stream_descriptions(perms), media_type="application/x-ndjson")
+
+
+async def _note_relpath(permalink: str) -> str:
+    """Map a permalink to its path inside NOTES_DIR: <project>/<file_path>.
+    read_note is the source of truth for the real filename (slug != filename)."""
+    project = permalink.split("/")[0]
+    async with mcp.session() as call:
+        note = await call("read_note", identifier=permalink, project=project)
+    fp = (note or {}).get("file_path")
+    if not fp:
+        raise LookupError(permalink)
+    return f"{project}/{fp}"
+
+
+async def _history_proxy(path: str, params: dict):
+    import httpx
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(history.HISTORY_URL + path, params=params)
+        return JSONResponse(r.json(), status_code=r.status_code)
+
+
+@app.get("/history/{permalink:path}")
+async def note_history(permalink: str):
+    """Version list for a note. 404 when the feature is off or the note is unknown."""
+    if mcp.MOCK_DATA:
+        return {"versions": mock.versions(permalink)}
+    if history.HISTORY_URL and not history.native():
+        return await _history_proxy(f"/history/{permalink}", {})
+    if not history.native():
+        return JSONResponse({"error": "history disabled"}, status_code=404)
+    try:
+        relpath = await _note_relpath(permalink)
+    except LookupError:
+        return JSONResponse({"error": "note not found"}, status_code=404)
+    return {"versions": await asyncio.to_thread(history.versions, relpath)}
+
+
+@app.get("/history-diff/{permalink:path}")
+async def note_history_diff(permalink: str, rev: str):
+    """Diff of a past revision against the current file, plus the old content."""
+    if mcp.MOCK_DATA:
+        old, new = mock.content(permalink, rev), mock.content(permalink, "current")
+        return {"rows": history.diff_rows(old, new), "content": old}
+    if history.HISTORY_URL and not history.native():
+        return await _history_proxy(f"/history-diff/{permalink}", {"rev": rev})
+    if not history.native():
+        return JSONResponse({"error": "history disabled"}, status_code=404)
+    try:
+        relpath = await _note_relpath(permalink)
+    except LookupError:
+        return JSONResponse({"error": "note not found"}, status_code=404)
+    old = await asyncio.to_thread(history.content, relpath, rev)
+    new = await asyncio.to_thread(history.content, relpath, "current")
+    return {"rows": history.diff_rows(old, new), "content": old}
 
 
 @app.get("/go")

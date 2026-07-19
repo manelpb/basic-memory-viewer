@@ -10,6 +10,12 @@
   <span class="m"><span class="chip {{ note.chip }}">{{ note.chip }}</span></span>
   <span class="m"><code>{{ note.permalink }}</code></span>
   {% if note.tags %}<span class="tags">{% for t in note.tags %}<span class="tag">#{{ t }}</span>{% endfor %}</span>{% endif %}
+  {% if history_enabled %}
+  <button class="hist-btn" data-history-for="{{ note.permalink }}" title="File history">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+    History
+  </button>
+  {% endif %}
 </div>
 
 <div class="body">{{ note.body_html|safe }}</div>

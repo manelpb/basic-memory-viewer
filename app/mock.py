@@ -111,9 +111,40 @@ NOTES = {
 }
 
 
+# Fake version history for the demo: a couple of revisions per note, oldest last.
+# Content evolves so the diff dialog has something real to show.
+HISTORY = {
+    "platform/project/project-gateway-rollout": [
+        {"rev": "current", "date": "", "get": lambda: NOTES["platform/project/project-gateway-rollout"]["content"]},
+        {"rev": "b3f2a91c", "date": _ago(days=1, hours=1), "get": lambda: (
+            "Canary has been at 10% for a day with p99 steady at 43ms.\n\n"
+            "**Blocked on:** the retry-storm fix in [[project-retry-budget]] — without it a\n"
+            "single upstream blip amplifies 6x through the mesh.\n\n"
+            "| Stage | Traffic | p99 |\n|-|-|-|\n| Canary | 10% | 43ms |\n| Baseline | 90% | 44ms |\n")},
+        {"rev": "8c41d07e", "date": _ago(days=3), "get": lambda: (
+            "Kicking off the gateway rollout. Canary starts tomorrow at 5%.\n")},
+    ],
+}
+
+
 def _entity(p):
     n = NOTES[p]
     return {"permalink": p, "title": n["title"], "created_at": n["created_at"]}
+
+
+def versions(permalink):
+    vs = HISTORY.get(permalink) or [
+        {"rev": "current", "date": "", "get": lambda p=permalink: NOTES.get(p, {}).get("content", "")}]
+    return [{"rev": v["rev"], "date": v["date"], "size": len(v["get"]().encode())} for v in vs]
+
+
+def content(permalink, rev):
+    for v in HISTORY.get(permalink, []):
+        if v["rev"] == rev:
+            return v["get"]()
+    if rev == "current":
+        return NOTES.get(permalink, {}).get("content", "")
+    return ""
 
 
 async def call(name, **args):

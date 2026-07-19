@@ -66,6 +66,27 @@
   </main>
 </div>
 
+{% if history_enabled %}
+<div class="hist-overlay" id="histOverlay" hidden>
+  <div class="hist-dialog" role="dialog" aria-label="File history">
+    <div class="hist-head">
+      <div>
+        <b>File history</b>
+        <span class="hist-sub" id="histSub"></span>
+      </div>
+      <button class="hist-close" id="histClose" aria-label="Close">✕</button>
+    </div>
+    <div class="hist-body">
+      <div class="hist-versions" id="histVersions"></div>
+      <div class="hist-diff-wrap">
+        <div class="hist-diff-head" id="histDiffHead"></div>
+        <div class="hist-diff" id="histDiff"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
   const root = document.documentElement;
   const saved = localStorage.getItem("theme");
@@ -205,6 +226,78 @@
     if (e.state && e.state.permalink) openNote(e.state.permalink, false);
     else showList(false);
   });
+  // File-history dialog: version list + side-by-side diff vs the current note.
+  const histOverlay = document.getElementById("histOverlay");
+  if (histOverlay) {
+    const vlist = document.getElementById("histVersions");
+    const dhead = document.getElementById("histDiffHead");
+    const dbody = document.getElementById("histDiff");
+    const sub = document.getElementById("histSub");
+    let histPermalink = null, histContent = "";
+    const fmt = iso => iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Current";
+    function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+    function cell(n, text, cls) {
+      return `<div class="dc ${cls}"><span class="ln">${n ?? ""}</span><span class="dt">${esc(text ?? "")}</span></div>`;
+    }
+    function renderRows(rows) {
+      dbody.innerHTML = rows.map(r => {
+        if (r.t === "skip") return `<div class="dskip">· ${r.n} unchanged lines ·</div>`;
+        if (r.t === "ctx") return `<div class="dr">${cell(r.an, r.text, "")}${cell(r.bn, r.text, "")}</div>`;
+        return `<div class="dr">${cell(r.an, r.a, r.a !== undefined ? "del" : "void")}${cell(r.bn, r.b, r.b !== undefined ? "add" : "void")}</div>`;
+      }).join("") || '<div class="dskip">No differences.</div>';
+    }
+    async function selectVersion(v) {
+      vlist.querySelectorAll(".hv.active").forEach(e => e.classList.remove("active"));
+      vlist.querySelector(`.hv[data-rev="${v.rev}"]`)?.classList.add("active");
+      dhead.innerHTML = `<span>${fmt(v.date)} → Current</span>
+        <button class="hist-copy" id="histCopy">Copy this version</button>`;
+      dbody.innerHTML = '<div class="dskip">Loading…</div>';
+      const res = await fetch(`/history-diff/${histPermalink}?rev=${encodeURIComponent(v.rev)}`);
+      if (!res.ok) { dbody.innerHTML = '<div class="dskip">Failed to load diff.</div>'; return; }
+      const d = await res.json();
+      histContent = d.content;
+      renderRows(d.rows);
+      document.getElementById("histCopy").onclick = e => {
+        navigator.clipboard.writeText(histContent);
+        e.target.textContent = "Copied";
+        setTimeout(() => { e.target.textContent = "Copy this version"; }, 1200);
+      };
+    }
+    async function openHistory(permalink) {
+      histPermalink = permalink;
+      histOverlay.hidden = false;
+      sub.textContent = "";
+      vlist.innerHTML = '<div class="dskip">Loading…</div>';
+      dhead.innerHTML = ""; dbody.innerHTML = "";
+      const res = await fetch("/history/" + permalink);
+      if (!res.ok) { vlist.innerHTML = '<div class="dskip">No history available.</div>'; return; }
+      const { versions } = await res.json();
+      vlist.innerHTML = versions.map(v => `
+        <button class="hv" data-rev="${v.rev}">
+          <span class="hv-date">${v.rev === "current" ? "Current" : fmt(v.date)}</span>
+          <span class="hv-meta">${v.rev === "current" ? "" : v.rev.slice(0, 10) + " · "}${v.size} bytes</span>
+        </button>`).join("");
+      versions.forEach(v => {
+        vlist.querySelector(`.hv[data-rev="${v.rev}"]`).onclick = () => selectVersion(v);
+      });
+      const first = versions.find(v => v.rev !== "current") || versions[0];
+      if (first) selectVersion(first);
+    }
+    document.addEventListener("click", e => {
+      const btn = e.target.closest(".hist-btn");
+      if (btn) openHistory(btn.getAttribute("data-history-for"));
+      if (e.target === histOverlay || e.target.closest("#histClose")) histOverlay.hidden = true;
+    });
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && !histOverlay.hidden) histOverlay.hidden = true;
+    });
+    // Deep link: /note/...#history opens the dialog directly.
+    if (location.hash === "#history") {
+      const btn = document.querySelector(".hist-btn");
+      if (btn) openHistory(btn.getAttribute("data-history-for"));
+    }
+  }
+
   // Deep-loaded note page: record its state so Back reveals the list in-page.
   if (document.body.classList.contains("view-note")) {
     const active = listbody.querySelector(".row.active");

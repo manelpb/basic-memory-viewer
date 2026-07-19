@@ -25,6 +25,9 @@ env:
   APP_TITLE: Memory
   # optional account name in the sidebar
   # APP_USER: you
+  # file history: URL of an instance of this image running with NOTES_DIR
+  # colocated with basic-memory (see README "File history & git backup")
+  # HISTORY_URL: http://basic-memory-history.basic-memory.svc.cluster.local:8000
 
 podSecurityContext:
   runAsNonRoot: true

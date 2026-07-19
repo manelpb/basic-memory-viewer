@@ -25,6 +25,8 @@ full-text + semantic ranking; the view always reflects the live knowledge base.
 - **Semantic search** (delegated to basic-memory's `search_notes`)
 - Markdown rendering with `[[wikilink]]` resolution and a "Related" panel
 - Card descriptions lazy-hydrate on scroll (batched, TTL-cached)
+- **File history**: git-backed note versions with a side-by-side diff dialog,
+  plus optional auto-push to a remote for off-site backup (see below)
 - Light/dark themes, read-only (no edit/delete affordances)
 
 ## Run locally
@@ -55,6 +57,11 @@ kubectl port-forward -n basic-memory svc/basic-memory 8000:8000
 |-|-|-|
 | `MCP_URL` | `http://localhost:8000/mcp` | basic-memory MCP SSE endpoint |
 | `MOCK_DATA` | _(unset)_ | `1` = serve canned demo notes, no MCP needed |
+| `NOTES_DIR` | _(unset)_ | path to the basic-memory notes dir → this instance owns file history |
+| `HISTORY_URL` | _(unset)_ | base URL of a `NOTES_DIR` instance → proxy history to it |
+| `SNAPSHOT_INTERVAL` | `300` | seconds between git snapshots (`NOTES_DIR` mode) |
+| `GIT_REMOTE` | _(unset)_ | git URL; every snapshot is pushed here for backup |
+| `GIT_BRANCH` | `main` | branch used for snapshots/pushes |
 | `BM_PROJECT` | `main` | default project shown |
 | `APP_TITLE` | `Memory` | brand name shown in the UI |
 | `APP_USER` | _(empty)_ | optional account name in the sidebar |
@@ -68,6 +75,33 @@ docker run -p 8000:8000 -e MCP_URL=... basic-memory-viewer
 
 CI (`.github/workflows/build.yml`) builds and pushes
 `ghcr.io/manelpb/basic-memory-viewer` on every push to `main`.
+
+## File history & git backup
+
+Notes are plain markdown files, so history is just git. When the viewer runs
+with `NOTES_DIR` pointing at the notes directory, it initializes a git repo
+there (`NOTES_DIR/.git`), snapshots changes every `SNAPSHOT_INTERVAL` seconds,
+and every note gets a **History** button: version list plus a side-by-side diff
+against the current text. Read-only stance preserved — view and copy, no
+restore.
+
+![file history dialog](docs/history.png)
+
+Set `GIT_REMOTE` and each snapshot is also pushed — your knowledge base gets an
+off-site, full-history backup for free. Use an SSH URL with a mounted deploy
+key, or an HTTPS URL carrying a token from a secret. Point it at a **private**
+repo.
+
+Deployment shapes:
+
+- **Single instance, same host as basic-memory**: set `NOTES_DIR` on the viewer
+  itself. Done.
+- **Viewer in a separate pod** (can't mount the notes volume): run a second
+  container from this same image next to basic-memory with `NOTES_DIR` (and
+  optionally `GIT_REMOTE`), and give the main viewer `HISTORY_URL` pointing at
+  it — history requests are proxied through.
+
+Unset both and the feature disappears from the UI.
 
 ## Deployment
 
@@ -101,6 +135,8 @@ on a private network (LAN-only ingress, VPN, or port-forward).
 | `/note/{permalink}` | rendered note + related |
 | `/search?q=&project=` | search results fragment (semantic) |
 | `/descriptions?ids=` | batch note descriptions (lazy card hydration) |
+| `/history/{permalink}` | version list for a note (git-backed) |
+| `/history-diff/{permalink}?rev=` | side-by-side diff of a revision vs current |
 | `/go?to=` | resolve a `[[wikilink]]` target → redirect |
 | `/livez` `/healthz` | liveness / readiness (readiness checks MCP) |
 
