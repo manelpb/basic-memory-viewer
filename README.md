@@ -78,6 +78,38 @@ docker run -p 8000:8000 -e MCP_URL=... basic-memory-viewer
 CI (`.github/workflows/build.yml`) builds and pushes
 `ghcr.io/manelpb/basic-memory-viewer` on every push to `main`.
 
+## Connecting cloud agents to basic-memory
+
+The viewer only needs LAN access, but you may want cloud agents (claude.ai /
+Cowork, Codex, hosted Claude Code) talking to the same basic-memory instance.
+Never expose the MCP endpoint bare — it has no auth and includes **write**
+tools. Two patterns that work:
+
+**Cloudflare Tunnel + Access.** Publish a hostname through a Cloudflare Tunnel
+to the basic-memory service and gate it with Access:
+
+- CLI agents (Codex, Claude Code) authenticate with an Access **service
+  token** — both support custom headers on remote MCP servers
+  (`http_headers` in Codex's `config.toml`, `--header` on
+  `claude mcp add`), so they send `CF-Access-Client-Id/Secret` directly.
+- Cloud agents (claude.ai / Cowork custom connectors) can't send custom
+  headers; they speak MCP OAuth. Put an [MCP Server
+  Portal](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/)
+  in front — it handles the OAuth flow against Access and lets you **curate
+  which tools are exposed** (e.g. only `search_notes`, `read_note`,
+  `recent_activity`), keeping cloud agents read-only while LAN clients keep
+  full access.
+
+**LiteLLM MCP gateway.** If you already run a
+[LiteLLM proxy](https://docs.litellm.ai/docs/mcp), register basic-memory as an
+MCP server in it and point agents at the proxy's MCP endpoint with a LiteLLM
+virtual key. Per-key/team tool permissions give you the same read-only story,
+and `available_on_public_internet` scopes what external callers can even see.
+
+Requires basic-memory on the streamable HTTP transport
+(`basic-memory mcp --transport streamable-http`) — the SSE transport is
+deprecated in the MCP spec and not supported by these gateways.
+
 ## File history & git backup
 
 Notes are plain markdown files, so history is just git. When the viewer runs
