@@ -1,8 +1,15 @@
 # basic-memory-viewer
 
 A lean, **read-only** web UI for browsing and searching
-[basic-memory](https://github.com/basicmachines-co/basic-memory) notes — a
-self-hosted take on the basic-memory Cloud app.
+[basic-memory](https://github.com/basicmachines-co/basic-memory) notes — an
+independent, self-hosted viewer inspired by the basic-memory Cloud app. Not
+affiliated with or endorsed by Basic Machines.
+
+> [!WARNING]
+> **No authentication.** Anyone who can reach this app can read your entire
+> knowledge base. Never expose it to the internet — keep it on a private
+> network (LAN-only ingress, VPN, or port-forward) or put your own auth proxy
+> in front of it.
 
 It is a thin frontend over basic-memory's own MCP tools: it opens a short-lived
 MCP session per request and calls `search_notes`, `read_note`,
@@ -96,3 +103,10 @@ on a private network (LAN-only ingress, VPN, or port-forward).
 | `/descriptions?ids=` | batch note descriptions (lazy card hydration) |
 | `/go?to=` | resolve a `[[wikilink]]` target → redirect |
 | `/livez` `/healthz` | liveness / readiness (readiness checks MCP) |
+
+## License
+
+[MIT](LICENSE). This project contains no code or assets from basic-memory or
+its Cloud app; it only talks to your own basic-memory instance through its
+public MCP tools. "basic-memory" is a project of Basic Machines — this viewer
+is unaffiliated.
