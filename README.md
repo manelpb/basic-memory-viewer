@@ -31,7 +31,8 @@ full-text + semantic ranking; the view always reflects the live knowledge base.
 
 ## Run locally
 
-Point it at a reachable basic-memory MCP endpoint (SSE transport at `/mcp`):
+Point it at a reachable basic-memory MCP endpoint (`/mcp`, streamable HTTP —
+set `MCP_TRANSPORT=sse` for servers still on the deprecated SSE transport):
 
 ```bash
 pip install -r requirements.txt
@@ -55,7 +56,8 @@ kubectl port-forward -n basic-memory svc/basic-memory 8000:8000
 
 | Env | Default | Purpose |
 |-|-|-|
-| `MCP_URL` | `http://localhost:8000/mcp` | basic-memory MCP SSE endpoint |
+| `MCP_URL` | `http://localhost:8000/mcp` | basic-memory MCP endpoint |
+| `MCP_TRANSPORT` | `http` | `http` (streamable HTTP) or `sse` for older basic-memory deployments |
 | `MOCK_DATA` | _(unset)_ | `1` = serve canned demo notes, no MCP needed |
 | `NOTES_DIR` | _(unset)_ | path to the basic-memory notes dir → file history + descriptions served from disk |
 | `HISTORY_URL` | _(unset)_ | base URL of a `NOTES_DIR` instance → proxy history to it |

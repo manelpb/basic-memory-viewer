@@ -1,7 +1,11 @@
-"""Thin async client for basic-memory's MCP server (SSE transport at /mcp).
+"""Thin async client for basic-memory's MCP server at /mcp.
+
+Transport is streamable HTTP by default (the current MCP spec transport);
+set MCP_TRANSPORT=sse for basic-memory instances still running the
+deprecated SSE transport.
 
 One short-lived session per request: robust and stateless — the server accepts
-many concurrent SSE clients, and there is no shared mutable session to go stale
+many concurrent clients, and there is no shared mutable session to go stale
 or hit anyio cross-task issues. All tools are called with output_format=json.
 """
 import json
@@ -10,10 +14,23 @@ from contextlib import asynccontextmanager
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 
 MCP_URL = os.environ.get("MCP_URL", "http://localhost:8000/mcp")
+MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "http")  # "http" | "sse"
 DEFAULT_PROJECT = os.environ.get("BM_PROJECT", "main")
 MOCK_DATA = os.environ.get("MOCK_DATA") == "1"
+
+
+@asynccontextmanager
+async def _transport():
+    """Yield a (read, write) stream pair for the configured transport."""
+    if MCP_TRANSPORT == "sse":
+        async with sse_client(MCP_URL) as (read, write):
+            yield read, write
+    else:
+        async with streamablehttp_client(MCP_URL) as (read, write, _get_session_id):
+            yield read, write
 
 
 @asynccontextmanager
@@ -23,7 +40,7 @@ async def session():
         from . import mock
         yield mock.call
         return
-    async with sse_client(MCP_URL) as (read, write):
+    async with _transport() as (read, write):
         async with ClientSession(read, write) as s:
             await s.initialize()
 
