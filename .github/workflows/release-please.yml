@@ -1,0 +1,37 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Re-tag the released commit's image with its version. This CANNOT be a
+  # `release: published` trigger on build.yml: releases created with the default
+  # GITHUB_TOKEN do not trigger further workflow runs, so that event never fires
+  # and the semver tag would silently never be published. Calling build.yml as a
+  # reusable workflow keeps it in the same run and needs no PAT.
+  image:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      extra_tag: ${{ needs.release-please.outputs.tag_name }}

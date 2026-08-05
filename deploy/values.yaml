@@ -4,8 +4,9 @@
 
 image:
   repository: ghcr.io/manelpb/basic-memory-viewer
-  # Images are tagged with the short commit SHA only (no moving `latest`) —
-  # pin one so rollouts are deterministic and rollbackable.
+  # Every build is tagged with its short commit SHA, and released builds also
+  # carry their version (e.g. `v0.2.0`). Both are immutable — there is no moving
+  # `latest` — so pin either one and rollouts stay deterministic and rollbackable.
   tag: ""
   pullPolicy: IfNotPresent
 

@@ -9,6 +9,15 @@ on:
       - "requirements.txt"
       - ".github/workflows/build.yml"
   workflow_dispatch: {}
+  # Called by release-please.yml after it cuts a release, to publish the same
+  # content under its version tag as well as its SHA.
+  workflow_call:
+    inputs:
+      extra_tag:
+        description: "Additional immutable tag to publish (e.g. v0.2.0)."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -32,10 +41,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/manelpb/basic-memory-viewer
-          # Immutable per-commit tag only — no moving `latest`. Deploys pin a SHA
-          # so rollouts are deterministic and rollbackable.
+          # Immutable tags only — no moving `latest`. Deploys pin a SHA or a
+          # version so rollouts are deterministic and rollbackable. Release
+          # builds carry both: the SHA and the vX.Y.Z that release-please cut.
           tags: |
             type=sha,prefix=,format=short
+            type=raw,value=${{ inputs.extra_tag }},enable=${{ inputs.extra_tag != '' }}
 
       - uses: docker/build-push-action@v6
         with:
