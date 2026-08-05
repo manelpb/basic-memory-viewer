@@ -7,9 +7,15 @@ deprecated SSE transport.
 One short-lived session per request: robust and stateless — the server accepts
 many concurrent clients, and there is no shared mutable session to go stale
 or hit anyio cross-task issues. All tools are called with output_format=json.
+
+The exception is `health()`, which is called on a fixed probe cadence rather than
+by a user: it caches successes, because sessions are not free to the server (see
+the comment there).
 """
+import asyncio
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 
 from mcp import ClientSession
@@ -53,10 +59,34 @@ async def session():
             yield call
 
 
+# basic-memory retains ~11-24 kB per streamable-HTTP MCP session and never frees it
+# (measured 2026-08-05: +4,860 kB RSS over 448 sessions, fastmcp 3.3.1 / mcp 1.27.1).
+# An uncached health() therefore turns probe cadence directly into a memory leak in
+# the server: one session every 15s = 5,760/day, which walked basic-memory into its
+# 2Gi limit and OOMKilled it every ~9 days. Cache successes so probe traffic costs
+# one session per HEALTH_TTL rather than one per request.
+HEALTH_TTL = float(os.environ.get("HEALTH_TTL", "60"))
+
+_health_lock = asyncio.Lock()
+_health_ok_until = 0.0
+
+
 async def health() -> bool:
-    try:
-        async with session() as call:
-            await call("list_memory_projects")
+    """True if basic-memory answers an MCP tool call. Successes cached HEALTH_TTL seconds.
+
+    Failures are never cached — recovery must be visible on the very next probe.
+    """
+    global _health_ok_until
+    if time.monotonic() < _health_ok_until:
         return True
-    except Exception:
-        return False
+    # Serialize concurrent probes so a burst costs one session, not one each.
+    async with _health_lock:
+        if time.monotonic() < _health_ok_until:
+            return True
+        try:
+            async with session() as call:
+                await call("list_memory_projects")
+        except Exception:
+            return False
+        _health_ok_until = time.monotonic() + HEALTH_TTL
+        return True
