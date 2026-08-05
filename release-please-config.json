@@ -5,7 +5,12 @@
   "packages": {
     ".": {
       "changelog-path": "CHANGELOG.md",
-      "extra-files": ["deploy/Chart.yaml"]
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "deploy/Chart.yaml"
+        }
+      ]
     }
   }
 }
