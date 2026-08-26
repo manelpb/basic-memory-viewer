@@ -143,6 +143,7 @@
     resetDescriptions();
     listbody.innerHTML = html;
     observeSnips();
+    observeMore();
   }
   document.addEventListener("click", e => {
     const a = e.target.closest(".sidebar .proj");
@@ -215,6 +216,66 @@
   }
   observeSnips();
 
+  // Feed pagination. The recent feed is one page of rows plus a sentinel button;
+  // /recent returns the next page as bare rows that get appended in place. The
+  // observer's root is .rows, not the viewport — .rows is the scroll container,
+  // and a viewport-rooted rootMargin cannot see past its clip.
+  let moreIO = null, moreBusy = false;
+  function observeMore() {
+    if (moreIO) { moreIO.disconnect(); moreIO = null; }
+    const rows = listbody.querySelector(".rows");
+    const btn = rows && rows.querySelector(".more-btn");
+    if (!btn) return;
+    moreIO = new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) { moreIO.disconnect(); loadMore(e.target); }
+    }, { root: rows, rootMargin: "300px" });
+    moreIO.observe(btn);
+  }
+  async function loadMore(btn) {
+    if (moreBusy || !btn.isConnected) return;
+    moreBusy = true;
+    const gen = listGen, rows = btn.parentElement;
+    btn.disabled = true; btn.textContent = "Loading…";
+    try {
+      const res = await fetch(`/recent?project=${encodeURIComponent(project)}` +
+        `&page=${encodeURIComponent(btn.getAttribute("data-next-page"))}`);
+      if (!res.ok) throw new Error(res.status);
+      const html = await res.text();
+      // A project switch or search may have replaced the list mid-fetch.
+      if (gen !== listGen || !btn.isConnected) return;
+      const chunk = document.createElement("div");
+      chunk.innerHTML = html;
+      // Offset paging can hand back a row that is already on screen — a note
+      // written mid-scroll shifts the window, and recent_activity's own order is
+      // not exactly the created_at order the feed sorts on. Drop the repeats,
+      // then any day heading they leave with nothing under it.
+      const have = new Set([...rows.querySelectorAll("a.row")].map(a => a.getAttribute("href")));
+      chunk.querySelectorAll("a.row").forEach(a => {
+        if (have.has(a.getAttribute("href"))) a.remove();
+      });
+      chunk.querySelectorAll(".day").forEach(d => {
+        const next = d.nextElementSibling;
+        if (!next || !next.classList.contains("row")) d.remove();
+      });
+      // A day split across the page boundary would otherwise get a second heading.
+      const first = chunk.firstElementChild;
+      const lastDay = [...rows.querySelectorAll(".day")].pop();
+      if (first && first.classList.contains("day") &&
+          lastDay && first.textContent === lastDay.textContent) first.remove();
+      btn.remove();
+      while (chunk.firstChild) rows.appendChild(chunk.firstChild);
+      observeSnips();
+      observeMore();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "Load more";  // let the user retry
+    } finally { moreBusy = false; }
+  }
+  document.addEventListener("click", e => {
+    const btn = e.target.closest(".more-btn");
+    if (btn) { e.preventDefault(); loadMore(btn); }
+  });
+  observeMore();
+
   // Search box lives in the sidebar (desktop) and the list header (mobile) —
   // both drive the same live search; ⌘K focuses whichever is visible.
   const searchInputs = [...document.querySelectorAll(".js-search")];
@@ -229,6 +290,7 @@
       resetDescriptions();  // abort hydration for the rows we're about to replace
       listbody.innerHTML = html;
       observeSnips();
+      observeMore();
     }, 220);
   }
   searchInputs.forEach(inp => inp.addEventListener("input", () => {

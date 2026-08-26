@@ -65,9 +65,13 @@ async def _projects(call, active):
     return [{"name": n, "active": n == active} for n in names]
 
 
-RECENT_LIMIT = 60
+# basic-memory rejects a larger page_size outright ("page_size must be <= 100").
+BM_MAX_PAGE_SIZE = 100
+# Rows per page of the recent feed. This is a page size, not a ceiling: the feed
+# pages back through the whole timeframe via /recent (see `_recent_groups`).
+RECENT_LIMIT = max(1, min(int(os.environ.get("RECENT_LIMIT", "60")), BM_MAX_PAGE_SIZE))
 # Recent feed window. Notes span the full history (real created_at), so keep this
-# wide — the feed is capped by RECENT_LIMIT, not the window.
+# wide — nothing older than this is reachable, however far the feed pages back.
 RECENT_TIMEFRAME = os.environ.get("RECENT_TIMEFRAME", "365d")  # basic-memory caps at 1y
 # permalink -> (description, change token). The token is the note's
 # updated_at/created_at from the feed: entries never expire, they are simply
@@ -158,11 +162,18 @@ def _row(entity, active_permalink=None, desc=""):
     }
 
 
+def _feed_key(e):
+    # permalink breaks ties so a batch sorts the same way every time: notes written
+    # in the same second are common (a bulk edit), and an unstable order would
+    # shuffle rows between one page request and the next.
+    return (e.get("created_at") or "", e.get("permalink") or "")
+
+
 def _group_by_day(entities, active_permalink=None):
     # recent_activity does not return newest-first, so sort before grouping.
     # Rows render immediately with no descriptions; the client lazy-hydrates each
     # card's description via /descriptions as it scrolls into view.
-    entities = sorted(entities, key=lambda e: e.get("created_at") or "", reverse=True)
+    entities = sorted(entities, key=_feed_key, reverse=True)
     groups, cur = [], None
     for e in entities:
         label = day_label(parse_date(e.get("created_at")))
@@ -177,24 +188,61 @@ def _entities(data):
     return data if isinstance(data, list) else (data or {}).get("results", [])
 
 
-async def _recent_groups(call, project, active_permalink=None):
-    data = await call("recent_activity", project=project, timeframe=RECENT_TIMEFRAME, page_size=RECENT_LIMIT)
-    return _group_by_day(_entities(data), active_permalink)
+async def _recent_groups(call, project, active_permalink=None, page=1):
+    """One page of a single project's feed. Returns (groups, has_more).
+
+    recent_activity pages natively, so this is one call per page. A full page
+    back means there may be another; the next page returning nothing is what
+    settles it (an exact multiple over-promises once, harmlessly).
+    """
+    data = await call("recent_activity", project=project, timeframe=RECENT_TIMEFRAME,
+                      page=page, page_size=RECENT_LIMIT)
+    entities = _entities(data)
+    return _group_by_day(entities, active_permalink), len(entities) >= RECENT_LIMIT
 
 
-async def _recent_all(call, names, active_permalink=None):
+async def _take(call, project, count):
+    """The newest `count` feed entities of one project.
+
+    recent_activity caps page_size at 100, so a deeper window is stitched from
+    consecutive native pages. The page size stays fixed across the loop — the
+    server's offset is (page - 1) * page_size, so varying it mid-walk would skip
+    or repeat rows.
+    """
+    size = min(BM_MAX_PAGE_SIZE, count)
+    out, page = [], 1
+    while len(out) < count:
+        batch = _entities(await call("recent_activity", project=project,
+                                     timeframe=RECENT_TIMEFRAME, page=page, page_size=size))
+        out.extend(batch)
+        if len(batch) < size:  # short page = end of the window
+            break
+        page += 1
+    return out[:count]
+
+
+async def _recent_all(call, names, active_permalink=None, page=1):
     """Cross-project recent feed: fan out per project, merge newest-first.
-    Lets the home page show everything recent without pinning one default project."""
-    results = await asyncio.gather(*[
-        call("recent_activity", project=n, timeframe=RECENT_TIMEFRAME, page_size=RECENT_LIMIT)
-        for n in names
-    ], return_exceptions=True)
+    Lets the home page show everything recent without pinning one default project.
+
+    Page N cannot be assembled from each project's page N — the merge interleaves
+    them — so each project is asked for everything up to the end of the window and
+    the merged list is sliced. One extra row past the end is what tells us whether
+    a further page exists.
+
+    A row can still repeat at a page boundary: recent_activity's own order is not
+    exactly created_at-descending, so a note pulled in by the wider fetch can sort
+    ahead of the boundary and shift it. The client drops rows it already has.
+    """
+    end = RECENT_LIMIT * page
+    results = await asyncio.gather(*[_take(call, n, end + 1) for n in names],
+                                   return_exceptions=True)
     merged = []
     for r in results:
         if not isinstance(r, Exception):
-            merged.extend(_entities(r))
-    merged.sort(key=lambda e: e.get("created_at") or "", reverse=True)
-    return _group_by_day(merged[:RECENT_LIMIT], active_permalink)
+            merged.extend(r)
+    merged.sort(key=_feed_key, reverse=True)
+    return _group_by_day(merged[end - RECENT_LIMIT:end], active_permalink), len(merged) > end
 
 
 async def _note(call, permalink):
@@ -254,12 +302,12 @@ async def index(request: Request, project: str = ""):
     async with mcp.session() as call:
         if project:
             # projects + recent list are independent → fetch concurrently
-            projects, groups = await asyncio.gather(
+            projects, (groups, has_more) = await asyncio.gather(
                 _projects(call, project), _recent_groups(call, project))
         else:
             # no project chosen → cross-project recent feed (needs the names first)
             projects = await _projects(call, project)
-            groups = await _recent_all(call, [p["name"] for p in projects])
+            groups, has_more = await _recent_all(call, [p["name"] for p in projects])
         # open the most-recent note by default
         first = next((i for g in groups for i in g["items"]), None)
         note = await _note(call, first["permalink"]) if first else None
@@ -269,7 +317,7 @@ async def index(request: Request, project: str = ""):
     return templates.TemplateResponse(request, "base.html", {
         "request": request, "projects": projects, "active_project": project,
         "groups": groups, "note": note, "search_mode": False, "query": "",
-        "note_page": False,
+        "note_page": False, "has_more": has_more, "next_page": 2,
     })
 
 
@@ -285,7 +333,7 @@ async def note_page(request: Request, permalink: str):
         })
     async with mcp.session() as call:
         # all three are independent → fetch concurrently
-        projects, groups, note = await asyncio.gather(
+        projects, (groups, has_more), note = await asyncio.gather(
             _projects(call, project),
             _recent_groups(call, project, active_permalink=permalink),
             _note(call, permalink))
@@ -293,7 +341,7 @@ async def note_page(request: Request, permalink: str):
     return templates.TemplateResponse(request, "base.html", {
         "request": request, "projects": projects, "active_project": project,
         "groups": groups, "note": note, "search_mode": False, "query": "",
-        "note_page": True,
+        "note_page": True, "has_more": has_more, "next_page": 2,
     })
 
 
@@ -303,12 +351,13 @@ async def search(request: Request, q: str = "", project: str = ""):
     if not q:
         async with mcp.session() as call:
             if project:
-                groups = await _recent_groups(call, project)
+                groups, has_more = await _recent_groups(call, project)
             else:
                 projects = await _projects(call, project)
-                groups = await _recent_all(call, [p["name"] for p in projects])
+                groups, has_more = await _recent_all(call, [p["name"] for p in projects])
         return templates.TemplateResponse(request, "_rows.html", {
             "request": request, "groups": groups, "search_mode": False, "query": "", "count": 0,
+            "has_more": has_more, "next_page": 2,
         })
     async with mcp.session() as call:
         if project:
@@ -328,6 +377,29 @@ async def search(request: Request, q: str = "", project: str = ""):
     return templates.TemplateResponse(request, "_rows.html", {
         "request": request, "groups": groups, "search_mode": True, "query": q,
         "count": len(items),
+    })
+
+
+@app.get("/recent", response_class=HTMLResponse)
+async def recent_fragment(request: Request, project: str = "", page: int = 1):
+    """Page 2+ of the recent feed, as bare rows the client appends.
+
+    Page 1 is rendered inline by whichever page you landed on; this is what the
+    feed's "Load more" button asks for. Search results are not paged — they come
+    from search_notes, which has its own cap.
+    """
+    project, page = project.strip(), max(1, page)
+    async with mcp.session() as call:
+        if project:
+            groups, has_more = await _recent_groups(call, project, page=page)
+        else:
+            projects = await _projects(call, project)
+            groups, has_more = await _recent_all(
+                call, [p["name"] for p in projects], page=page)
+    _prewarm(groups)
+    return templates.TemplateResponse(request, "_rowgroups.html", {
+        "request": request, "groups": groups, "search_mode": False,
+        "appending": True, "has_more": has_more, "next_page": page + 1,
     })
 
 

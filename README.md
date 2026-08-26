@@ -65,6 +65,8 @@ kubectl port-forward -n basic-memory svc/basic-memory 8000:8000
 | `GIT_REMOTE` | _(unset)_ | git URL; every snapshot is pushed here for backup |
 | `GIT_BRANCH` | `main` | branch used for snapshots/pushes |
 | `BM_PROJECT` | `main` | default project shown |
+| `RECENT_LIMIT` | `60` | rows per page of the recent feed; "Load more" pages back through the rest (basic-memory caps it at 100) |
+| `RECENT_TIMEFRAME` | `365d` | how far back the recent feed reaches (basic-memory caps at 1y) |
 | `APP_TITLE` | `Memory` | brand name shown in the UI |
 | `APP_USER` | _(empty)_ | optional account name in the sidebar |
 

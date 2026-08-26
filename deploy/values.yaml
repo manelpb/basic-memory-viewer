@@ -22,6 +22,10 @@ env:
   MCP_URL: http://basic-memory.basic-memory.svc.cluster.local:8000/mcp
   # default project shown in the UI
   BM_PROJECT: main
+  # rows per page of the recent feed; "Load more" pages back through the rest
+  RECENT_LIMIT: "60"
+  # how far back the recent feed reaches (basic-memory caps at 1 year)
+  RECENT_TIMEFRAME: 365d
   # brand name shown in the UI
   APP_TITLE: Memory
   # optional account name in the sidebar

@@ -1,0 +1,19 @@
+{% for g in groups %}
+  {% if g.day %}<div class="day">{{ g.day }}</div>{% endif %}
+  {% for n in g["items"] %}
+  <a class="row{% if n.active %} active{% endif %}" href="/note/{{ n.permalink }}">
+    <div class="r-top">
+      <span class="chip {{ n.chip }}">{{ n.chip }}</span>
+      <span class="r-title">{{ n.title }}</span>
+      {% if n.date %}<span class="r-date">{{ n.date }}</span>{% endif %}
+    </div>
+    {% if n.snip %}<div class="r-snip">{{ n.snip }}</div>
+    {% else %}<div class="r-snip" data-desc-for="{{ n.permalink }}" data-desc-upd="{{ n.upd|default('') }}"></div>{% endif %}
+  </a>
+  {% endfor %}
+{% else %}
+  {% if not appending %}<div class="empty">{% if search_mode %}No matches.{% else %}No notes yet.{% endif %}</div>{% endif %}
+{% endfor %}
+{% if has_more %}
+<button class="more-btn" type="button" data-next-page="{{ next_page }}">Load more</button>
+{% endif %}
