@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/manelpb/basic-memory-viewer/compare/v0.1.1...v0.2.0) (2026-08-30)
+
+
+### Features
+
+* **feed:** page the recent feed instead of stopping at 60 rows ([#7](https://github.com/manelpb/basic-memory-viewer/issues/7)) ([1e2ec06](https://github.com/manelpb/basic-memory-viewer/commit/1e2ec06a3494aac5c0d1f6a65e01e80c30b60985)), closes [#6](https://github.com/manelpb/basic-memory-viewer/issues/6)
+
 ## [0.1.1](https://github.com/manelpb/basic-memory-viewer/compare/v0.1.0...v0.1.1) (2026-08-05)
 
 
