@@ -153,7 +153,13 @@ async def call(name, **args):
         return {"projects": [{"name": p} for p in PROJECTS]}
     if name == "recent_activity":
         proj = args.get("project")
-        return {"results": [_entity(p) for p in NOTES if not proj or p.startswith(proj + "/")]}
+        hits = [p for p in NOTES if not proj or p.startswith(proj + "/")]
+        # Newest-first then sliced, same as the real tool, so the feed's paging
+        # works under MOCK_DATA=1 (set RECENT_LIMIT low to see it with 8 notes).
+        hits.sort(key=lambda p: NOTES[p]["created_at"], reverse=True)
+        size = args.get("page_size", 10)
+        start = (max(1, args.get("page", 1)) - 1) * size
+        return {"results": [_entity(p) for p in hits[start:start + size]]}
     if name == "search_notes":
         q = (args.get("query") or "").lower()
         hits = [p for p, n in NOTES.items()
